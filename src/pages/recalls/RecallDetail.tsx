@@ -14,6 +14,10 @@ import {
   AlertTriangle,
   Clock,
   History,
+  ChevronDown,
+  ChevronUp,
+  Save,
+  FileCheck,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -37,6 +41,21 @@ const timelineColorMap: Record<RecallTimelineEvent['type'], TimelineItem['color'
   status_changed: 'default',
 };
 
+const NOTIFICATION_STATUS_LABEL: Record<RecallNotificationStatus, string> = {
+  pending: '待发送',
+  sent: '已发送',
+  received: '已收到',
+  off_shelf: '已下架',
+  returned: '已退回',
+  urged: '已催促',
+};
+
+interface DisposalFormData {
+  disposalRemark: string;
+  returnedQty: string;
+  voucherNo: string;
+}
+
 export default function RecallDetail() {
   const { id: urlId } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -49,6 +68,7 @@ export default function RecallDetail() {
     sendNotifications,
     urgeRecipients,
     updateNotificationStatus,
+    updateNotificationDisposal,
   } = useRecallStore();
 
   const [recallId, setRecallId] = useState<string>(urlId || '');
@@ -56,6 +76,8 @@ export default function RecallDetail() {
   const [urging, setUrging] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [disposalForms, setDisposalForms] = useState<Record<string, DisposalFormData>>({});
 
   useEffect(() => {
     initRecalls();
@@ -77,6 +99,19 @@ export default function RecallDetail() {
     return recall ? getRecallStats(recall.id) : null;
   }, [getRecallStats, recall]);
 
+  useEffect(() => {
+    if (!recall) return;
+    const initialForms: Record<string, DisposalFormData> = {};
+    recall.notifications.forEach((n) => {
+      initialForms[n.id] = {
+        disposalRemark: n.disposalRemark || '',
+        returnedQty: n.returnedQty !== undefined ? String(n.returnedQty) : '',
+        voucherNo: n.voucherNo || '',
+      };
+    });
+    setDisposalForms(initialForms);
+  }, [recall?.id, recall?.notifications.length]);
+
   const kanbanColumns: KanbanColumn[] = useMemo(() => {
     if (!recall) return [];
 
@@ -96,7 +131,7 @@ export default function RecallDetail() {
         title: '已发送',
         color: 'bg-blue-500',
         bgColor: 'bg-blue-50',
-        items: filterByStatus(['sent', 'urged']),
+        items: filterByStatus(['sent']),
       },
       {
         key: 'received',
@@ -125,9 +160,45 @@ export default function RecallDetail() {
   const pendingCount = useMemo(() => {
     if (!recall) return 0;
     return recall.notifications.filter(
-      (n) => n.status === 'pending' || n.status === 'urged'
+      (n) => n.status === 'pending'
     ).length;
   }, [recall]);
+
+  const toggleCardExpand = (id: string) => {
+    setExpandedCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleDisposalChange = (notificationId: string, field: keyof DisposalFormData, value: string) => {
+    setDisposalForms((prev) => ({
+      ...prev,
+      [notificationId]: {
+        ...prev[notificationId],
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSaveDisposal = (notificationId: string) => {
+    const form = disposalForms[notificationId];
+    if (!form) return;
+
+    updateNotificationDisposal(notificationId, {
+      disposalRemark: form.disposalRemark || undefined,
+      returnedQty: form.returnedQty ? Number(form.returnedQty) : undefined,
+      voucherNo: form.voucherNo || undefined,
+    });
+
+    setSuccessMsg('处置凭证已保存');
+    setTimeout(() => setSuccessMsg(''), 2000);
+  };
 
   const handleSendNotifications = async () => {
     if (!recall) return;
@@ -183,7 +254,6 @@ export default function RecallDetail() {
   const getNextStatus = (current: RecallNotificationStatus): RecallNotificationStatus | null => {
     if (current === 'pending') return 'sent';
     if (current === 'sent') return 'received';
-    if (current === 'urged') return 'received';
     if (current === 'received') return 'off_shelf';
     if (current === 'off_shelf') return 'returned';
     return null;
@@ -209,10 +279,10 @@ export default function RecallDetail() {
   };
 
   const renderItemBadge = (item: RecallNotification) => {
-    if (item.status === 'urged') {
+    if (item.urgeCount && item.urgeCount > 0) {
       return (
         <div className="absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-alert-danger border border-red-200">
-          已催促
+          已催促{item.urgeCount > 1 ? ` ${item.urgeCount}次` : ''}
         </div>
       );
     }
@@ -226,40 +296,175 @@ export default function RecallDetail() {
     return null;
   };
 
+  const canEditDisposal = (item: RecallNotification) => {
+    return item.status === 'off_shelf' || item.status === 'returned';
+  };
+
+  const renderItemBody = (item: RecallNotification) => {
+    const isExpanded = expandedCards.has(item.id);
+    const canEdit = canEditDisposal(item);
+    const form = disposalForms[item.id] || { disposalRemark: '', returnedQty: '', voucherNo: '' };
+    const hasDisposalData = item.disposalRemark || item.returnedQty !== undefined || item.voucherNo;
+
+    return (
+      <div>
+        <div className="flex justify-between items-start gap-2">
+          <div className="flex-1">
+            <p className="font-semibold text-gray-800 text-sm mb-1 pr-16">
+              {item.recipientName}
+            </p>
+            <p className="text-xs text-gray-500 mb-1">
+              {item.recipientType === 'dealer' ? '经销商' : '门店'}
+              {' · '}
+              涉及 {item.quantity} 件
+            </p>
+            <p className="text-xs text-gray-400 mb-1">{item.contact}</p>
+            {hasDisposalData && !isExpanded && (
+              <p className="text-xs text-indigo-600 flex items-center gap-1 mt-1">
+                <FileCheck size={12} />
+                已填写处置凭证
+              </p>
+            )}
+          </div>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleCardExpand(item.id);
+            }}
+            className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            title={isExpanded ? '收起' : '展开处置凭证'}
+          >
+            {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        </div>
+
+        {isExpanded && (
+          <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
+            {canEdit ? (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    处置说明
+                  </label>
+                  <textarea
+                    value={form.disposalRemark}
+                    onChange={(e) => handleDisposalChange(item.id, 'disposalRemark', e.target.value)}
+                    placeholder="请填写处置情况说明，如下架位置、现场处理方式等"
+                    className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100"
+                    rows={2}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      退回数量
+                    </label>
+                    <input
+                      type="number"
+                      value={form.returnedQty}
+                      onChange={(e) => handleDisposalChange(item.id, 'returnedQty', e.target.value)}
+                      placeholder="件数"
+                      className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      凭证编号
+                    </label>
+                    <input
+                      type="text"
+                      value={form.voucherNo}
+                      onChange={(e) => handleDisposalChange(item.id, 'voucherNo', e.target.value)}
+                      placeholder="如入库单/退货单号"
+                      className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSaveDisposal(item.id);
+                  }}
+                  className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md bg-brand-600 text-white hover:bg-brand-700 transition-colors"
+                >
+                  <Save size={12} />
+                  保存凭证
+                </button>
+              </>
+            ) : (
+              <div className="space-y-2 text-xs">
+                <p className="text-gray-400">
+                  完成下架或退回后可填写处置凭证
+                </p>
+                {item.disposalRemark && (
+                  <div>
+                    <span className="text-gray-500">处置说明：</span>
+                    <span className="text-gray-700">{item.disposalRemark}</span>
+                  </div>
+                )}
+                {item.returnedQty !== undefined && (
+                  <div>
+                    <span className="text-gray-500">退回数量：</span>
+                    <span className="text-gray-700">{item.returnedQty} 件</span>
+                  </div>
+                )}
+                {item.voucherNo && (
+                  <div>
+                    <span className="text-gray-500">凭证编号：</span>
+                    <span className="text-gray-700">{item.voucherNo}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderItemActions = (item: RecallNotification) => {
     const nextStatus = getNextStatus(item.status);
 
     return (
-      <div className="flex gap-2 items-center">
-        <span className="flex-1 text-[11px] text-gray-400">
-          {item.status === 'urged' && item.urgedAt && (
-            <span className="text-alert-warn">
-              催促于 {formatDateTime(item.urgedAt, 'MM-DD HH:mm')}
-            </span>
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-2 items-center">
+          <span className="flex-1 text-[11px] text-gray-400">
+            {item.urgeCount && item.urgeCount > 0 && item.lastUrgedAt && (
+              <span className="text-alert-warn mr-2">
+                催促{formatDateTime(item.lastUrgedAt, 'MM-DD HH:mm')}
+              </span>
+            )}
+            {item.status === 'sent' && item.sentAt && (
+              <span>
+                发送 {formatDateTime(item.sentAt, 'MM-DD HH:mm')}
+              </span>
+            )}
+            {item.respondedAt && (
+              <span>
+                {item.status !== 'sent' ? ' · ' : ''}
+                {formatDateTime(item.respondedAt, 'MM-DD HH:mm')}
+              </span>
+            )}
+          </span>
+          {nextStatus && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleAdvanceStatus(item);
+              }}
+              className="px-2.5 py-1 text-xs font-medium rounded bg-brand-50 text-brand-700 hover:bg-brand-100 transition-colors"
+            >
+              {getNextLabel(item.status)}
+            </button>
           )}
-          {item.status === 'sent' && item.sentAt && (
-            <span>
-              发送 {formatDateTime(item.sentAt, 'MM-DD HH:mm')}
-            </span>
-          )}
-          {item.respondedAt && (
-            <span>
-              {' · '}
-              {formatDateTime(item.respondedAt, 'MM-DD HH:mm')}
-            </span>
-          )}
-        </span>
-        {nextStatus && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAdvanceStatus(item);
-            }}
-            className="px-2.5 py-1 text-xs font-medium rounded bg-brand-50 text-brand-700 hover:bg-brand-100 transition-colors"
-          >
-            {getNextLabel(item.status)}
-          </button>
-        )}
+        </div>
+        <div className="text-[10px] text-gray-400">
+          当前状态：{NOTIFICATION_STATUS_LABEL[item.status]}
+          {item.urgeCount && item.urgeCount > 0 ? ` · 已催促 ${item.urgeCount} 次` : ''}
+        </div>
       </div>
     );
   };
@@ -305,6 +510,12 @@ export default function RecallDetail() {
               <h1 className="page-title">召回详情</h1>
               <RecallLevelTag level={recall.level} />
               <RecallStatusTag status={recall.status} />
+              {stats && stats.riskScore >= 40 && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded bg-red-50 text-red-600 border border-red-200">
+                  <AlertTriangle size={12} />
+                  高风险
+                </span>
+              )}
             </div>
             <p className="page-subtitle">召回单号：{recall.recallNo}</p>
           </div>
@@ -325,6 +536,7 @@ export default function RecallDetail() {
             onClick={handleUrge}
           >
             自动催促
+            {stats && stats.urged > 0 ? ` (${stats.urged})` : ''}
           </Button>
           <Button
             variant="primary"
@@ -373,6 +585,25 @@ export default function RecallDetail() {
                   </div>
                   <p className="font-semibold text-gray-800">{formatDateTime(recall.createdAt)}</p>
                 </div>
+                {stats && (
+                  <>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <AlertTriangle size={14} />
+                        <span>风险评分</span>
+                      </div>
+                      <p className={clsx(
+                        'font-semibold',
+                        stats.riskScore >= 40 ? 'text-alert-danger' : stats.riskScore >= 20 ? 'text-alert-warn' : 'text-gray-800'
+                      )}>
+                        {stats.riskScore} 分
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        逾期 {stats.overdueDays} 天 · 累计催促 {stats.totalUrgeCount} 次
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="space-y-4">
@@ -413,8 +644,8 @@ export default function RecallDetail() {
                       <p className="text-xs text-gray-500">待发送</p>
                     </div>
                     <div className="text-center p-2 rounded-lg bg-blue-50">
-                      <p className="text-2xl font-bold text-blue-700">{stats.sent + stats.urged}</p>
-                      <p className="text-xs text-blue-600">已发送{stats.urged > 0 ? `(催促${stats.urged})` : ''}</p>
+                      <p className="text-2xl font-bold text-blue-700">{stats.sent}</p>
+                      <p className="text-xs text-blue-600">已发送</p>
                     </div>
                     <div className="text-center p-2 rounded-lg bg-indigo-50">
                       <p className="text-2xl font-bold text-indigo-700">{stats.received}</p>
@@ -429,6 +660,13 @@ export default function RecallDetail() {
                       <p className="text-xs text-brand-600">已退回</p>
                     </div>
                   </div>
+                  {stats.urged > 0 && (
+                    <div className="mt-3 w-full text-center p-2 rounded-lg bg-orange-50">
+                      <p className="text-sm font-medium text-orange-700">
+                        已催促 {stats.urged} 个 · 累计 {stats.totalUrgeCount} 次
+                      </p>
+                    </div>
+                  )}
                   {stats.unresponsive > 0 && (
                     <div className="mt-3 w-full text-center p-2 rounded-lg bg-red-50">
                       <p className="text-sm font-medium text-alert-danger">
@@ -508,8 +746,15 @@ export default function RecallDetail() {
                 <div className="flex items-center gap-1.5">
                   <NotificationStatusTag status="returned" size={12} />
                 </div>
+                <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-gray-200">
+                  <span className="w-3 h-3 rounded bg-red-100 border border-red-200"></span>
+                  <span className="text-gray-500">已催促</span>
+                </div>
               </div>
             </div>
+            <p className="mt-2 text-xs text-gray-500">
+              卡片右上角红色角标表示已催促（不影响当前状态），点击卡片右下角 ▾ 按钮可展开查看/填写处置凭证
+            </p>
           </CardHeader>
           <CardBody className="p-6">
             {recall.notifications.length === 0 ? (
@@ -520,6 +765,7 @@ export default function RecallDetail() {
             ) : (
               <Kanban
                 columns={kanbanColumns}
+                renderItemBody={renderItemBody}
                 renderItemActions={renderItemActions}
                 renderItemBadge={renderItemBadge}
               />

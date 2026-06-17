@@ -39,6 +39,11 @@ export interface RecallNotification {
   sentAt?: string;
   respondedAt?: string;
   urgedAt?: string;
+  urgeCount?: number;
+  lastUrgedAt?: string;
+  disposalRemark?: string;
+  returnedQty?: number;
+  voucherNo?: string;
   remark?: string;
 }
 
@@ -68,6 +73,9 @@ export interface RecallStats {
   pending: number;
   unresponsive: number;
   completionRate: number;
+  totalUrgeCount: number;
+  overdueDays: number;
+  riskScore: number;
 }
 
 export interface RecallFilterParams {
@@ -79,4 +87,6 @@ export interface RecallFilterParams {
   minCompletionRate?: number;
   maxCompletionRate?: number;
   hasUnresponsive?: boolean;
+  highRiskOnly?: boolean;
+  sortByRisk?: boolean;
 }

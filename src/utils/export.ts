@@ -81,6 +81,10 @@ export const exportRecallReport = (
     { 项目: '发起时间', 内容: formatDateTime(recall.createdAt) },
     { 项目: '发起人', 内容: recall.initiator },
     { 项目: '当前状态', 内容: getRecallStatusText(recall.status) },
+    { 项目: '风险评分', 内容: `${stats.riskScore} 分` },
+    { 项目: '逾期天数', 内容: `${stats.overdueDays} 天` },
+    { 项目: '累计催促次数', 内容: stats.totalUrgeCount },
+    { 项目: '未响应数量', 内容: stats.unresponsive },
   ];
 
   const summary = [
@@ -89,9 +93,11 @@ export const exportRecallReport = (
     { 统计项: '已收到', 数量: stats.received },
     { 统计项: '已下架', 数量: stats.offShelf },
     { 统计项: '已退回', 数量: stats.returned },
-    { 统计项: '已催促', 数量: stats.urged },
+    { 统计项: '已催促对象', 数量: stats.urged },
+    { 统计项: '累计催促次数', 数量: stats.totalUrgeCount },
     { 统计项: '待处理', 数量: stats.pending },
-    { 统计项: '完成率(%)', 数量: stats.completionRate.toFixed(1) },
+    { 统计项: '未响应/待退回', 数量: stats.unresponsive },
+    { 统计项: '完成率(%)', 数量: Number(stats.completionRate.toFixed(1)) },
   ];
 
   const notifications = recall.notifications.map((n) => ({
@@ -100,19 +106,62 @@ export const exportRecallReport = (
     联系人: n.contact,
     涉及数量: n.quantity,
     状态: getNotificationStatusText(n.status),
+    催促次数: n.urgeCount ?? 0,
+    最后催促时间: formatDateTime(n.lastUrgedAt),
     发送时间: formatDateTime(n.sentAt),
     响应时间: formatDateTime(n.respondedAt),
+    退回数量: n.returnedQty ?? '',
+    凭证编号: n.voucherNo || '',
+    处置说明: n.disposalRemark || '',
     备注: n.remark || '',
   }));
+
+  const timeline = [...(recall.timeline || [])]
+    .sort((a, b) => a.time.localeCompare(b.time))
+    .map((e, idx) => ({
+      序号: idx + 1,
+      事件时间: formatDateTime(e.time),
+      事件类型: getTimelineEventTypeText(e.type),
+      事件标题: e.title,
+      事件描述: e.description || '',
+      操作人: e.operator || '系统',
+    }));
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.json_to_sheet(recallInfo);
   const ws2 = XLSX.utils.json_to_sheet(summary);
   const ws3 = XLSX.utils.json_to_sheet(notifications);
+  const ws4 = XLSX.utils.json_to_sheet(timeline);
+
+  ws1['!cols'] = [{ wch: 16 }, { wch: 40 }];
+  ws2['!cols'] = [{ wch: 18 }, { wch: 12 }];
+  ws3['!cols'] = [
+    { wch: 10 }, { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 10 },
+    { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
+    { wch: 10 }, { wch: 16 }, { wch: 30 }, { wch: 20 },
+  ];
+  ws4['!cols'] = [
+    { wch: 6 }, { wch: 20 }, { wch: 12 }, { wch: 30 }, { wch: 40 }, { wch: 10 },
+  ];
+
   XLSX.utils.book_append_sheet(wb, ws1, '召回信息');
   XLSX.utils.book_append_sheet(wb, ws2, '召回统计');
   XLSX.utils.book_append_sheet(wb, ws3, '通知详情');
+  XLSX.utils.book_append_sheet(wb, ws4, '事件时间线');
   XLSX.writeFile(wb, `召回报告_${recall.recallNo}.xlsx`);
+};
+
+const getTimelineEventTypeText = (type: string): string => {
+  const map: Record<string, string> = {
+    created: '创建召回',
+    notification_sent: '通知发送',
+    urged: '催促通知',
+    notification_received: '确认收到',
+    off_shelf: '产品下架',
+    returned: '产品退回',
+    status_changed: '状态变更',
+  };
+  return map[type] || type;
 };
 
 export const getBatchStatusText = (status: string): string => {

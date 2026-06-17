@@ -2,25 +2,19 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
   Recall,
-  RecallFilterParams,
+  RecallStats,
   RecallNotification,
   RecallNotificationStatus,
-  RecallStats,
   RecallStatus,
+  RecallFilterParams,
   RecallTimelineEvent,
 } from '@/types/recall';
 import { generateId, generateRecallNo } from '@/utils/idGenerator';
-import { now } from '@/utils/date';
+import { now, diffDays } from '@/utils/date';
 import { seedRecalls } from '@/mock/seedRecalls';
-import { useShipmentStore } from './shipmentStore';
 import { useBatchStore } from './batchStore';
+import { useShipmentStore } from './shipmentStore';
 import { useBaseStore } from './baseStore';
-import { mockSendNotification } from '@/utils/notification';
-
-const ensureDependenciesInitialized = () => {
-  useShipmentStore.getState().initShipments();
-  useBaseStore.getState().initBase();
-};
 
 interface RecallStore {
   recalls: Recall[];
@@ -36,10 +30,19 @@ interface RecallStore {
     status: RecallNotificationStatus,
     respondedAt?: string
   ) => void;
+  updateNotificationDisposal: (
+    notificationId: string,
+    data: Partial<Pick<RecallNotification, 'disposalRemark' | 'returnedQty' | 'voucherNo'>>
+  ) => void;
   urgeRecipients: (recallId: string) => string[];
   getRecallStats: (recallId: string) => RecallStats;
   updateRecallStatus: (id: string, status: RecallStatus) => void;
 }
+
+const ensureDependenciesInitialized = () => {
+  useShipmentStore.getState().initShipments();
+  useBaseStore.getState().initBase();
+};
 
 const buildTimelineEvent = (
   type: RecallTimelineEvent['type'],
@@ -62,6 +65,27 @@ const appendTimeline = (recall: Recall, events: RecallTimelineEvent[]): Recall =
   timeline: [...(recall.timeline || []), ...events],
 });
 
+const mockSendNotification = async (notifications: RecallNotification[]) => {
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const success = notifications.map((n) => n.id);
+  return { success, failed: [] };
+};
+
+const calculateRiskScore = (recall: Recall, stats: RecallStats): number => {
+  let score = 0;
+  const daysPassed = diffDays(now(), recall.createdAt);
+  score += stats.totalUrgeCount * 25;
+  score += stats.overdueDays * 8;
+  score += Math.max(0, (100 - stats.completionRate) * 2);
+  if (recall.level === 'level1') score += 50;
+  if (recall.level === 'level2') score += 25;
+  return Math.round(score);
+};
+
+const isHighRisk = (recall: Recall, stats: RecallStats): boolean => {
+  return stats.riskScore >= 40 || stats.totalUrgeCount >= 2 || stats.overdueDays >= 3 || stats.completionRate < 50;
+};
+
 export const useRecallStore = create<RecallStore>()(
   persist(
     (set, get) => ({
@@ -78,6 +102,14 @@ export const useRecallStore = create<RecallStore>()(
               : [
                   buildTimelineEvent('created', '创建召回单', `${r.recallNo} - ${r.reason}`, r.initiator),
                 ],
+            notifications: r.notifications.map((n) => ({
+              ...n,
+              urgeCount: n.urgeCount ?? 0,
+              lastUrgedAt: n.lastUrgedAt,
+              disposalRemark: n.disposalRemark,
+              returnedQty: n.returnedQty,
+              voucherNo: n.voucherNo,
+            })),
           }));
           set({ recalls: migrated, initialized: true });
         }
@@ -102,7 +134,7 @@ export const useRecallStore = create<RecallStore>()(
           createdAt: now(),
           initiator: data.initiator || '',
           status: data.status || 'pending',
-          notifications: notifications.map((n) => ({ ...n, recallId: '' })),
+          notifications: notifications.map((n) => ({ ...n, recallId: '', urgeCount: 0 })),
           timeline: [],
         };
 
@@ -174,7 +206,24 @@ export const useRecallStore = create<RecallStore>()(
           });
         }
 
-        return result.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        if (params?.highRiskOnly) {
+          result = result.filter((r) => {
+            const stats = get().getRecallStats(r.id);
+            return isHighRisk(r, stats);
+          });
+        }
+
+        if (params?.sortByRisk) {
+          result.sort((a, b) => {
+            const statsA = get().getRecallStats(a.id);
+            const statsB = get().getRecallStats(b.id);
+            return statsB.riskScore - statsA.riskScore;
+          });
+        } else {
+          result.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        }
+
+        return result;
       },
 
       getRecall: (id) => get().recalls.find((r) => r.id === id),
@@ -197,9 +246,7 @@ export const useRecallStore = create<RecallStore>()(
               contact: `${dealer.contact} ${dealer.phone}`,
               status: 'pending',
               quantity: shipment.quantity,
-              sentAt: undefined,
-              respondedAt: undefined,
-              urgedAt: undefined,
+              urgeCount: 0,
             });
           }
 
@@ -215,14 +262,11 @@ export const useRecallStore = create<RecallStore>()(
                 recallId: '',
                 recipientType: 'store',
                 recipientId: store.id,
-                recipientName:
-                  shipment.storeNames[idx] || store.name,
+                recipientName: shipment.storeNames[idx] || store.name,
                 contact: `${store.contact} ${store.phone}`,
                 status: 'pending',
                 quantity: storeQty,
-                sentAt: undefined,
-                respondedAt: undefined,
-                urgedAt: undefined,
+                urgeCount: 0,
               });
             }
           });
@@ -247,7 +291,7 @@ export const useRecallStore = create<RecallStore>()(
         if (!recall) return { success: 0, failed: 0 };
 
         const pendingNotifs = recall.notifications.filter(
-          (n) => n.status === 'pending' || n.status === 'urged'
+          (n) => n.status === 'pending'
         );
 
         set({
@@ -274,7 +318,7 @@ export const useRecallStore = create<RecallStore>()(
             if (r.id !== recallId) return r;
             const updatedNotifications = r.notifications.map((n) =>
               result.success.includes(n.id)
-                ? { ...n, status: 'sent' as const, sentAt }
+                ? { ...n, status: 'sent' as const, sentAt, urgeCount: n.urgeCount ?? 0 }
                 : n
             );
             return appendTimeline(
@@ -351,14 +395,42 @@ export const useRecallStore = create<RecallStore>()(
               '系统'
             );
             set({
-              recalls: get().recalls.map((rec) =>
-                rec.id === changedRecallId
-                  ? appendTimeline({ ...rec, status: 'completed' }, [completeEvent])
-                  : rec
+              recalls: get().recalls.map((r) =>
+                r.id === changedRecallId
+                  ? appendTimeline({ ...r, status: 'completed' }, [completeEvent])
+                  : r
               ),
             });
           }
-        }, 200);
+        }, 100);
+      },
+
+      updateNotificationDisposal: (notificationId, data) => {
+        set({
+          recalls: get().recalls.map((r) => {
+            const matched = r.notifications.find((n) => n.id === notificationId);
+            if (!matched) return r;
+
+            const updatedNotifications = r.notifications.map((n) =>
+              n.id === notificationId ? { ...n, ...data } : n
+            );
+
+            const fields: string[] = [];
+            if (data.disposalRemark !== undefined) fields.push('处置说明');
+            if (data.returnedQty !== undefined) fields.push(`退回数量 ${data.returnedQty}`);
+            if (data.voucherNo !== undefined) fields.push(`凭证号 ${data.voucherNo}`);
+
+            const event = buildTimelineEvent(
+              'status_changed',
+              `${matched.recipientName}：更新处置凭证`,
+              fields.length > 0 ? `已更新：${fields.join('、')}` : undefined,
+              undefined,
+              matched.id
+            );
+
+            return appendTimeline({ ...r, notifications: updatedNotifications }, [event]);
+          }),
+        });
       },
 
       urgeRecipients: (recallId) => {
@@ -378,11 +450,12 @@ export const useRecallStore = create<RecallStore>()(
               if (isUnresponsive) {
                 unresponsiveIds.push(n.id);
                 urgedNames.push(n.recipientName);
+                const currentCount = n.urgeCount ?? 0;
                 return {
                   ...n,
-                  status: 'urged' as const,
-                  urgedAt,
-                  sentAt: n.sentAt || urgedAt,
+                  urgeCount: currentCount + 1,
+                  lastUrgedAt: urgedAt,
+                  urgedAt: n.urgedAt || urgedAt,
                 };
               }
               return n;
@@ -411,40 +484,44 @@ export const useRecallStore = create<RecallStore>()(
 
       getRecallStats: (recallId) => {
         const recall = get().getRecall(recallId);
-        const total = recall?.notifications.length || 0;
-        const countBy = (status: RecallNotificationStatus) =>
-          recall?.notifications.filter((n) => n.status === status).length || 0;
+        if (!recall) {
+          return {
+            total: 0, sent: 0, received: 0, offShelf: 0, returned: 0,
+            urged: 0, pending: 0, unresponsive: 0, completionRate: 0,
+            totalUrgeCount: 0, overdueDays: 0, riskScore: 0,
+          };
+        }
 
-        const sent = countBy('sent');
-        const received = countBy('received');
-        const offShelf = countBy('off_shelf');
-        const returned = countBy('returned');
-        const urged = countBy('urged');
-        const pending = countBy('pending');
+        const total = recall.notifications.length;
+        let pending = 0, sent = 0, received = 0, offShelf = 0, returned = 0, urged = 0;
+        let totalUrgeCount = 0;
 
-        const unresponsive = urged + sent + received;
+        recall.notifications.forEach((n) => {
+          if (n.urgeCount && n.urgeCount > 0) urged++;
+          totalUrgeCount += n.urgeCount ?? 0;
+          if (n.status === 'pending') pending++;
+          else if (n.status === 'sent') sent++;
+          else if (n.status === 'received') received++;
+          else if (n.status === 'off_shelf') offShelf++;
+          else if (n.status === 'returned') returned++;
+        });
 
-        const completedCount = returned;
-        const completionRate = total > 0 ? (completedCount / total) * 100 : 0;
+        const unresponsive = sent + received;
+        const completionRate = total > 0 ? Math.round((returned / total) * 100) : 0;
+        const overdueDays = Math.max(0, diffDays(now(), recall.createdAt) - 2);
 
-        return {
-          total,
-          sent,
-          received,
-          offShelf,
-          returned,
-          urged,
-          pending,
-          unresponsive,
-          completionRate,
+        const stats: RecallStats = {
+          total, sent, received, offShelf, returned, urged, pending,
+          unresponsive, completionRate, totalUrgeCount, overdueDays, riskScore: 0,
         };
+
+        stats.riskScore = calculateRiskScore(recall, stats);
+        return stats;
       },
 
       updateRecallStatus: (id, status) => {
         set({
-          recalls: get().recalls.map((r) =>
-            r.id === id ? { ...r, status } : r
-          ),
+          recalls: get().recalls.map((r) => (r.id === id ? { ...r, status } : r)),
         });
       },
     }),

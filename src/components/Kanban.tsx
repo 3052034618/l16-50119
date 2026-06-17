@@ -17,11 +17,12 @@ export interface KanbanColumn {
 interface KanbanProps {
   columns: KanbanColumn[];
   onItemClick?: (item: RecallNotification) => void;
+  renderItemBody?: (item: RecallNotification) => ReactNode;
   renderItemActions?: (item: RecallNotification) => ReactNode;
   renderItemBadge?: (item: RecallNotification) => ReactNode;
 }
 
-export function Kanban({ columns, onItemClick, renderItemActions, renderItemBadge }: KanbanProps) {
+export function Kanban({ columns, onItemClick, renderItemBody, renderItemActions, renderItemBadge }: KanbanProps) {
   const cols = columns.length;
   const gridClass = cols <= 4
     ? 'lg:grid-cols-4'
@@ -73,57 +74,63 @@ export function Kanban({ columns, onItemClick, renderItemActions, renderItemBadg
                   )}
                 >
                   {renderItemBadge && renderItemBadge(item)}
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {item.recipientType === 'dealer' ? (
-                        <Building2 size={14} className="text-brand-600 flex-shrink-0" />
-                      ) : (
-                        <Store size={14} className="text-blue-600 flex-shrink-0" />
-                      )}
-                      <span className="font-medium text-sm text-gray-800 truncate">
-                        {item.recipientName}
-                      </span>
-                    </div>
-                    <NotificationStatusTag status={item.status} size={12} />
-                  </div>
+                  {renderItemBody ? (
+                    renderItemBody(item)
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {item.recipientType === 'dealer' ? (
+                            <Building2 size={14} className="text-brand-600 flex-shrink-0" />
+                          ) : (
+                            <Store size={14} className="text-blue-600 flex-shrink-0" />
+                          )}
+                          <span className="font-medium text-sm text-gray-800 truncate">
+                            {item.recipientName}
+                          </span>
+                        </div>
+                        <NotificationStatusTag status={item.status} size={12} />
+                      </div>
 
-                  <div className="space-y-1.5 text-xs text-gray-500">
-                    <div className="flex justify-between">
-                      <span>类型</span>
-                      <span className="text-gray-600">
-                        {item.recipientType === 'dealer' ? '经销商' : '门店'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>数量</span>
-                      <span className="text-gray-600 font-medium">{item.quantity.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>联系人</span>
-                      <span className="text-gray-600 truncate max-w-[140px]">{item.contact}</span>
-                    </div>
-                    {item.sentAt && (
-                      <div className="flex justify-between">
-                        <span>发送时间</span>
-                        <span className="text-gray-600">{formatDateTime(item.sentAt, 'MM-DD HH:mm')}</span>
+                      <div className="space-y-1.5 text-xs text-gray-500">
+                        <div className="flex justify-between">
+                          <span>类型</span>
+                          <span className="text-gray-600">
+                            {item.recipientType === 'dealer' ? '经销商' : '门店'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>数量</span>
+                          <span className="text-gray-600 font-medium">{item.quantity.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>联系人</span>
+                          <span className="text-gray-600 truncate max-w-[140px]">{item.contact}</span>
+                        </div>
+                        {item.sentAt && (
+                          <div className="flex justify-between">
+                            <span>发送时间</span>
+                            <span className="text-gray-600">{formatDateTime(item.sentAt, 'MM-DD HH:mm')}</span>
+                          </div>
+                        )}
+                        {item.respondedAt && (
+                          <div className="flex justify-between">
+                            <span>响应时间</span>
+                            <span className="text-gray-600">{formatDateTime(item.respondedAt, 'MM-DD HH:mm')}</span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                    {item.respondedAt && (
-                      <div className="flex justify-between">
-                        <span>响应时间</span>
-                        <span className="text-gray-600">{formatDateTime(item.respondedAt, 'MM-DD HH:mm')}</span>
-                      </div>
-                    )}
-                  </div>
+
+                      {item.remark && (
+                        <div className="mt-2 p-2 bg-brand-50/50 rounded text-xs text-brand-700">
+                          {item.remark}
+                        </div>
+                      )}
+                    </>
+                  )}
 
                   {renderItemActions && (
                     <div className="mt-3 pt-3 border-t border-gray-100">{renderItemActions(item)}</div>
-                  )}
-
-                  {item.remark && (
-                    <div className="mt-2 p-2 bg-brand-50/50 rounded text-xs text-brand-700">
-                      {item.remark}
-                    </div>
                   )}
                 </div>
               ))

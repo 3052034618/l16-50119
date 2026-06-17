@@ -45,4 +45,8 @@ export const now = (): string => {
   return dayjs().format('YYYY-MM-DD HH:mm:ss');
 };
 
+export const diffDays = (date1: string, date2: string): number => {
+  return dayjs(date1).diff(dayjs(date2), 'day');
+};
+
 export default dayjs;

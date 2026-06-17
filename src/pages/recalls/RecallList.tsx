@@ -32,6 +32,8 @@ export default function RecallList() {
   const [dateFilter, setDateFilter] = useState<string>('');
   const [completionRateFilter, setCompletionRateFilter] = useState<string>('');
   const [unresponsiveFilter, setUnresponsiveFilter] = useState<string>('');
+  const [sortByRisk, setSortByRisk] = useState(false);
+  const [highRiskOnly, setHighRiskOnly] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(true);
@@ -71,8 +73,10 @@ export default function RecallList() {
       minCompletionRate,
       maxCompletionRate,
       hasUnresponsive,
+      sortByRisk,
+      highRiskOnly,
     });
-  }, [listRecalls, keyword, statusFilter, levelFilter, dateFilter, completionRateFilter, unresponsiveFilter]);
+  }, [listRecalls, keyword, statusFilter, levelFilter, dateFilter, completionRateFilter, unresponsiveFilter, sortByRisk, highRiskOnly]);
 
   const total = recalls.length;
 
@@ -90,6 +94,8 @@ export default function RecallList() {
     setDateFilter('');
     setCompletionRateFilter('');
     setUnresponsiveFilter('');
+    setSortByRisk(false);
+    setHighRiskOnly(false);
   };
 
   const columns: Column<Recall>[] = [
@@ -120,6 +126,36 @@ export default function RecallList() {
       title: '召回等级',
       width: '100px',
       render: (row) => <RecallLevelTag level={row.level} />,
+    },
+    {
+      key: 'riskScore',
+      title: '风险评分',
+      width: '110px',
+      render: (row) => {
+        const stats = getRecallStats(row.id);
+        const isHighRisk = stats.riskScore >= 40 || stats.totalUrgeCount >= 2 || stats.overdueDays >= 3;
+        return (
+          <div>
+            <p className={clsx(
+              'font-bold',
+              stats.riskScore >= 40 ? 'text-alert-danger' : stats.riskScore >= 20 ? 'text-alert-warn' : 'text-gray-700'
+            )}>
+              {stats.riskScore} 分
+            </p>
+            {isHighRisk && (
+              <p className="text-[10px] text-alert-warn mt-0.5 flex items-center gap-0.5">
+                <AlertTriangle size={10} />
+                高风险
+              </p>
+            )}
+            {stats.totalUrgeCount > 0 && (
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                催促 {stats.totalUrgeCount} 次 · 逾期 {stats.overdueDays} 天
+              </p>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: 'status',
@@ -178,11 +214,16 @@ export default function RecallList() {
                 待发送 {stats.pending}
               </div>
             )}
-            {stats.sent + stats.urged > 0 && (
+            {stats.sent > 0 && (
               <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-xs">
                 <span className="w-2 h-2 rounded-full bg-blue-500" />
-                已发 {(stats.sent + stats.urged)}
-                {stats.urged > 0 && <span className="text-alert-danger">(催{stats.urged})</span>}
+                已发 {stats.sent}
+              </div>
+            )}
+            {stats.urged > 0 && (
+              <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-orange-50 text-orange-700 text-xs">
+                <span className="w-2 h-2 rounded-full bg-orange-500" />
+                已催 {stats.urged}
               </div>
             )}
             {stats.received > 0 && (
@@ -268,6 +309,30 @@ export default function RecallList() {
           <p className="page-subtitle">批次问题产品快速召回、通知追踪与状态闭环管理</p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setSortByRisk(!sortByRisk)}
+            className={clsx(
+              'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all border-2',
+              sortByRisk
+                ? 'bg-alert-warn/10 text-alert-warn border-alert-warn/30'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+            )}
+          >
+            <AlertTriangle size={16} />
+            {sortByRisk ? '高风险优先 ✓' : '高风险优先'}
+          </button>
+          <button
+            onClick={() => setHighRiskOnly(!highRiskOnly)}
+            className={clsx(
+              'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all border-2',
+              highRiskOnly
+                ? 'bg-alert-danger/10 text-alert-danger border-alert-danger/30'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+            )}
+          >
+            <Filter size={16} />
+            {highRiskOnly ? '只看高风险 ✓' : '只看高风险'}
+          </button>
           <Button variant="secondary" icon={<RefreshCw size={16} />} loading={loading} onClick={handleRefresh}>
             刷新列表
           </Button>
@@ -443,9 +508,11 @@ export default function RecallList() {
             召回事件列表
             <span className="ml-3 text-sm text-gray-400 font-normal">
               共 {total} 条记录
-              {(completionRateFilter || unresponsiveFilter) && (
+              {(completionRateFilter || unresponsiveFilter || sortByRisk || highRiskOnly) && (
                 <span className="text-brand-600 ml-2 bg-brand-50 px-2 py-0.5 rounded">
                   已应用高级筛选
+                  {sortByRisk && ' · 高风险排序'}
+                  {highRiskOnly && ' · 仅高风险'}
                 </span>
               )}
             </span>
