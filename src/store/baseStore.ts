@@ -39,7 +39,8 @@ export const useBaseStore = create<BaseStore>()(
       initialized: false,
 
       initBase: () => {
-        if (!get().initialized) {
+        const state = get();
+        if (!state.initialized || state.dealers.length === 0 || state.stores.length === 0) {
           set({
             dealers: seedDealers,
             stores: seedStores,

@@ -32,7 +32,8 @@ export const useBatchStore = create<BatchStore>()(
       initialized: false,
 
       initBatches: () => {
-        if (!get().initialized) {
+        const state = get();
+        if (!state.initialized || state.batches.length === 0) {
           set({ batches: seedBatches, initialized: true });
         }
       },

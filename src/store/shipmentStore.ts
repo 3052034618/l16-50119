@@ -23,7 +23,8 @@ export const useShipmentStore = create<ShipmentStore>()(
       initialized: false,
 
       initShipments: () => {
-        if (!get().initialized) {
+        const state = get();
+        if (!state.initialized || state.shipments.length === 0) {
           set({ shipments: seedShipments, initialized: true });
         }
       },

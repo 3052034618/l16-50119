@@ -12,17 +12,30 @@ import {
   FileText,
   Check,
   AlertTriangle,
+  Clock,
+  History,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { RingProgress } from '@/components/RingProgress';
 import { Kanban, KanbanColumn } from '@/components/Kanban';
+import { Timeline, TimelineItem } from '@/components/Timeline';
 import { RecallLevelTag, RecallStatusTag, NotificationStatusTag } from '@/components/ui/StatusTag';
 import { useRecallStore } from '@/store/recallStore';
-import type { Recall, RecallNotification, RecallNotificationStatus } from '@/types/recall';
+import type { Recall, RecallNotification, RecallNotificationStatus, RecallTimelineEvent } from '@/types/recall';
 import { formatDateTime } from '@/utils/date';
 import { exportRecallReport } from '@/utils/export';
 import { clsx } from 'clsx';
+
+const timelineColorMap: Record<RecallTimelineEvent['type'], TimelineItem['color']> = {
+  created: 'info',
+  notification_sent: 'success',
+  urged: 'warning',
+  notification_received: 'info',
+  off_shelf: 'warning',
+  returned: 'success',
+  status_changed: 'default',
+};
 
 export default function RecallDetail() {
   const { id: urlId } = useParams<{ id: string }>();
@@ -71,6 +84,13 @@ export default function RecallDetail() {
       recall.notifications.filter((n) => statuses.includes(n.status));
 
     return [
+      {
+        key: 'pending',
+        title: '待发送',
+        color: 'bg-gray-400',
+        bgColor: 'bg-gray-50',
+        items: filterByStatus(['pending']),
+      },
       {
         key: 'sent',
         title: '已发送',
@@ -132,7 +152,11 @@ export default function RecallDetail() {
 
     try {
       const urgedIds = urgeRecipients(recall.id);
-      setSuccessMsg(`已催促 ${urgedIds.length} 个未及时响应的接收方`);
+      if (urgedIds.length === 0) {
+        setSuccessMsg('当前没有需要催促的接收方（已发送或已收到状态）');
+      } else {
+        setSuccessMsg(`已催促 ${urgedIds.length} 个未及时响应的接收方`);
+      }
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (error) {
       console.error('催促失败:', error);
@@ -156,55 +180,104 @@ export default function RecallDetail() {
     }
   };
 
+  const getNextStatus = (current: RecallNotificationStatus): RecallNotificationStatus | null => {
+    if (current === 'pending') return 'sent';
+    if (current === 'sent') return 'received';
+    if (current === 'urged') return 'received';
+    if (current === 'received') return 'off_shelf';
+    if (current === 'off_shelf') return 'returned';
+    return null;
+  };
+
   const handleAdvanceStatus = (notification: RecallNotification) => {
-    const statusFlow: RecallNotificationStatus[] = [
-      'pending',
-      'sent',
-      'received',
-      'off_shelf',
-      'returned',
-    ];
-    const currentIndex = statusFlow.indexOf(notification.status);
-    if (currentIndex < statusFlow.length - 1) {
-      const nextStatus = statusFlow[currentIndex + 1];
+    const nextStatus = getNextStatus(notification.status);
+    if (nextStatus) {
       updateNotificationStatus(notification.id, nextStatus);
     }
   };
 
-  const renderItemActions = (item: RecallNotification) => {
-    const statusFlow: RecallNotificationStatus[] = [
-      'pending',
-      'sent',
-      'received',
-      'off_shelf',
-      'returned',
-    ];
-    const currentIndex = statusFlow.indexOf(item.status);
-    const canAdvance = currentIndex < statusFlow.length - 1;
-    const nextLabels: Record<string, string> = {
+  const getNextLabel = (status: RecallNotificationStatus): string => {
+    const map: Record<RecallNotificationStatus, string> = {
       pending: '标记已发',
       sent: '标记已收',
+      urged: '标记已收',
       received: '标记下架',
       off_shelf: '标记退回',
-      urged: '标记已收',
+      returned: '已完成',
     };
+    return map[status];
+  };
+
+  const renderItemBadge = (item: RecallNotification) => {
+    if (item.status === 'urged') {
+      return (
+        <div className="absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-alert-danger border border-red-200">
+          已催促
+        </div>
+      );
+    }
+    if (item.status === 'pending') {
+      return (
+        <div className="absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-500 border border-gray-200">
+          待发送
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const renderItemActions = (item: RecallNotification) => {
+    const nextStatus = getNextStatus(item.status);
 
     return (
-      <div className="flex gap-2">
-        {canAdvance && (
+      <div className="flex gap-2 items-center">
+        <span className="flex-1 text-[11px] text-gray-400">
+          {item.status === 'urged' && item.urgedAt && (
+            <span className="text-alert-warn">
+              催促于 {formatDateTime(item.urgedAt, 'MM-DD HH:mm')}
+            </span>
+          )}
+          {item.status === 'sent' && item.sentAt && (
+            <span>
+              发送 {formatDateTime(item.sentAt, 'MM-DD HH:mm')}
+            </span>
+          )}
+          {item.respondedAt && (
+            <span>
+              {' · '}
+              {formatDateTime(item.respondedAt, 'MM-DD HH:mm')}
+            </span>
+          )}
+        </span>
+        {nextStatus && (
           <button
             onClick={(e) => {
               e.stopPropagation();
               handleAdvanceStatus(item);
             }}
-            className="flex-1 px-2 py-1 text-xs font-medium rounded bg-brand-50 text-brand-700 hover:bg-brand-100 transition-colors"
+            className="px-2.5 py-1 text-xs font-medium rounded bg-brand-50 text-brand-700 hover:bg-brand-100 transition-colors"
           >
-            {nextLabels[item.status] || '推进状态'}
+            {getNextLabel(item.status)}
           </button>
         )}
       </div>
     );
   };
+
+  const timelineItems: TimelineItem[] = useMemo(() => {
+    if (!recall) return [];
+    const sortedEvents = [...(recall.timeline || [])].sort(
+      (a, b) => a.time.localeCompare(b.time)
+    );
+    return sortedEvents.map((event) => ({
+      id: event.id,
+      title: event.title,
+      description: event.description,
+      time: formatDateTime(event.time),
+      status: 'completed',
+      color: timelineColorMap[event.type] || 'default',
+    }));
+  }, [recall]);
 
   if (!recall) {
     return (
@@ -335,9 +408,13 @@ export default function RecallDetail() {
                     subLabel={`${stats.returned}/${stats.total} 已退回`}
                   />
                   <div className="grid grid-cols-2 gap-3 mt-6 w-full">
+                    <div className="text-center p-2 rounded-lg bg-gray-50">
+                      <p className="text-2xl font-bold text-gray-700">{stats.pending}</p>
+                      <p className="text-xs text-gray-500">待发送</p>
+                    </div>
                     <div className="text-center p-2 rounded-lg bg-blue-50">
-                      <p className="text-2xl font-bold text-blue-700">{stats.sent}</p>
-                      <p className="text-xs text-blue-600">已发送</p>
+                      <p className="text-2xl font-bold text-blue-700">{stats.sent + stats.urged}</p>
+                      <p className="text-xs text-blue-600">已发送{stats.urged > 0 ? `(催促${stats.urged})` : ''}</p>
                     </div>
                     <div className="text-center p-2 rounded-lg bg-indigo-50">
                       <p className="text-2xl font-bold text-indigo-700">{stats.received}</p>
@@ -347,15 +424,15 @@ export default function RecallDetail() {
                       <p className="text-2xl font-bold text-amber-700">{stats.offShelf}</p>
                       <p className="text-xs text-amber-600">已下架</p>
                     </div>
-                    <div className="text-center p-2 rounded-lg bg-brand-50">
+                    <div className="text-center p-2 rounded-lg bg-brand-50 col-span-2">
                       <p className="text-2xl font-bold text-brand-700">{stats.returned}</p>
                       <p className="text-xs text-brand-600">已退回</p>
                     </div>
                   </div>
-                  {stats.urged > 0 && (
+                  {stats.unresponsive > 0 && (
                     <div className="mt-3 w-full text-center p-2 rounded-lg bg-red-50">
                       <p className="text-sm font-medium text-alert-danger">
-                        已催促 {stats.urged} 个接收方
+                        未响应/待退回 {stats.unresponsive} 个
                       </p>
                     </div>
                   )}
@@ -388,42 +465,68 @@ export default function RecallDetail() {
         </Card>
       )}
 
-      <Card padding="none">
-        <CardHeader divider className="px-6 pt-4 pb-4">
-          <div className="flex items-center justify-between w-full">
-            <CardTitle icon={<RefreshCw size={18} />}>
-              下游流向响应追踪
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+        <Card padding="none" className="xl:col-span-1">
+          <CardHeader divider className="px-6 pt-4 pb-4">
+            <CardTitle icon={<History size={18} />}>
+              召回事件时间线
             </CardTitle>
-            <div className="flex items-center gap-4 text-xs">
-              <div className="flex items-center gap-1.5">
-                <NotificationStatusTag status="sent" size={12} />
+          </CardHeader>
+          <CardBody className="p-6">
+            {timelineItems.length === 0 ? (
+              <div className="py-8 text-center text-gray-400">
+                <Clock size={32} className="mx-auto mb-2 opacity-40" />
+                <p className="text-sm">暂无时间记录</p>
               </div>
-              <div className="flex items-center gap-1.5">
-                <NotificationStatusTag status="received" size={12} />
+            ) : (
+              <div className="max-h-[480px] overflow-y-auto pr-2 scrollbar-thin">
+                <Timeline items={timelineItems} />
               </div>
-              <div className="flex items-center gap-1.5">
-                <NotificationStatusTag status="off_shelf" size={12} />
-              </div>
-              <div className="flex items-center gap-1.5">
-                <NotificationStatusTag status="returned" size={12} />
+            )}
+          </CardBody>
+        </Card>
+
+        <Card padding="none" className="xl:col-span-2">
+          <CardHeader divider className="px-6 pt-4 pb-4">
+            <div className="flex items-center justify-between w-full">
+              <CardTitle icon={<RefreshCw size={18} />}>
+                下游流向响应追踪
+              </CardTitle>
+              <div className="flex items-center gap-4 text-xs flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <NotificationStatusTag status="pending" size={12} />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <NotificationStatusTag status="sent" size={12} />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <NotificationStatusTag status="received" size={12} />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <NotificationStatusTag status="off_shelf" size={12} />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <NotificationStatusTag status="returned" size={12} />
+                </div>
               </div>
             </div>
-          </div>
-        </CardHeader>
-        <CardBody className="p-6">
-          {recall.notifications.length === 0 ? (
-            <div className="p-16 text-center text-gray-400">
-              <Package size={48} className="mx-auto mb-3 opacity-40" />
-              <p>暂无下游流向数据</p>
-            </div>
-          ) : (
-            <Kanban
-              columns={kanbanColumns}
-              renderItemActions={renderItemActions}
-            />
-          )}
-        </CardBody>
-      </Card>
+          </CardHeader>
+          <CardBody className="p-6">
+            {recall.notifications.length === 0 ? (
+              <div className="p-16 text-center text-gray-400">
+                <Package size={48} className="mx-auto mb-3 opacity-40" />
+                <p>暂无下游流向数据</p>
+              </div>
+            ) : (
+              <Kanban
+                columns={kanbanColumns}
+                renderItemActions={renderItemActions}
+                renderItemBadge={renderItemBadge}
+              />
+            )}
+          </CardBody>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -15,6 +15,24 @@ export const seedRecalls: Recall[] = [
     createdAt: '2026-06-15 09:30:00',
     initiator: '召回专员-陈海波',
     status: 'in_progress',
+    timeline: [
+      {
+        id: 'tl_seed_001_created',
+        type: 'created',
+        title: '召回事件创建',
+        description: '因霉菌超标问题启动二级召回',
+        time: '2026-06-15 09:30:00',
+        operator: '召回专员-陈海波',
+      },
+      {
+        id: 'tl_seed_001_sent',
+        type: 'notification_sent',
+        title: '通知已批量发送',
+        description: '向下游 7 家经销商/门店发送召回通知',
+        time: '2026-06-15 09:36:00',
+        operator: '系统',
+      },
+    ],
     notifications: [
       {
         id: 'notif_001',

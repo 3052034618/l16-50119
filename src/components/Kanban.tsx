@@ -6,7 +6,7 @@ import { formatDateTime } from '@/utils/date';
 import { Building2, Store } from 'lucide-react';
 
 export interface KanbanColumn {
-  key: RecallNotification['status'] | 'all';
+  key: RecallNotification['status'] | 'all' | string;
   title: string;
   count?: number;
   color: string;
@@ -18,11 +18,19 @@ interface KanbanProps {
   columns: KanbanColumn[];
   onItemClick?: (item: RecallNotification) => void;
   renderItemActions?: (item: RecallNotification) => ReactNode;
+  renderItemBadge?: (item: RecallNotification) => ReactNode;
 }
 
-export function Kanban({ columns, onItemClick, renderItemActions }: KanbanProps) {
+export function Kanban({ columns, onItemClick, renderItemActions, renderItemBadge }: KanbanProps) {
+  const cols = columns.length;
+  const gridClass = cols <= 4
+    ? 'lg:grid-cols-4'
+    : cols <= 5
+    ? 'lg:grid-cols-5'
+    : 'lg:grid-cols-6';
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 h-full">
+    <div className={clsx('grid grid-cols-1 md:grid-cols-2 gap-4 h-full', gridClass)}>
       {columns.map((column) => (
         <div
           key={column.key}
@@ -60,10 +68,11 @@ export function Kanban({ columns, onItemClick, renderItemActions }: KanbanProps)
                   key={item.id}
                   onClick={() => onItemClick?.(item)}
                   className={clsx(
-                    'p-4 rounded-lg bg-white shadow-card border border-gray-100 cursor-pointer',
+                    'p-4 rounded-lg bg-white shadow-card border border-gray-100 cursor-pointer relative',
                     'transition-all duration-200 hover:shadow-hover hover:-translate-y-0.5'
                   )}
                 >
+                  {renderItemBadge && renderItemBadge(item)}
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex items-center gap-1.5 min-w-0">
                       {item.recipientType === 'dealer' ? (

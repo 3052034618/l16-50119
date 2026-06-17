@@ -7,6 +7,8 @@ import { Input, Select, Textarea } from '@/components/ui/Input';
 import { RecallLevelTag } from '@/components/ui/StatusTag';
 import { useBatchStore } from '@/store/batchStore';
 import { useRecallStore } from '@/store/recallStore';
+import { useShipmentStore } from '@/store/shipmentStore';
+import { useBaseStore } from '@/store/baseStore';
 import type { Batch } from '@/types/batch';
 import type { RecallLevel, RecallNotification } from '@/types/recall';
 import { clsx } from 'clsx';
@@ -31,6 +33,8 @@ export default function RecallInitiate() {
   const navigate = useNavigate();
   const { batches, initBatches, getBatch } = useBatchStore();
   const { createRecall, queryDownstream } = useRecallStore();
+  const { initShipments } = useShipmentStore();
+  const { initBase } = useBaseStore();
 
   const [formData, setFormData] = useState<FormData>({
     batchId: '',
@@ -48,7 +52,9 @@ export default function RecallInitiate() {
 
   useEffect(() => {
     initBatches();
-  }, [initBatches]);
+    initShipments();
+    initBase();
+  }, [initBatches, initShipments, initBase]);
 
   const shippedBatches = useMemo(() => {
     return batches.filter(

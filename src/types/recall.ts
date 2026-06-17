@@ -8,6 +8,25 @@ export type RecallNotificationStatus =
   | 'returned'
   | 'urged';
 
+export type RecallTimelineEventType =
+  | 'created'
+  | 'notification_sent'
+  | 'urged'
+  | 'notification_received'
+  | 'off_shelf'
+  | 'returned'
+  | 'status_changed';
+
+export interface RecallTimelineEvent {
+  id: string;
+  type: RecallTimelineEventType;
+  title: string;
+  description?: string;
+  time: string;
+  operator?: string;
+  relatedId?: string;
+}
+
 export interface RecallNotification {
   id: string;
   recallId: string;
@@ -19,6 +38,7 @@ export interface RecallNotification {
   quantity: number;
   sentAt?: string;
   respondedAt?: string;
+  urgedAt?: string;
   remark?: string;
 }
 
@@ -35,6 +55,7 @@ export interface Recall {
   initiator: string;
   status: RecallStatus;
   notifications: RecallNotification[];
+  timeline: RecallTimelineEvent[];
 }
 
 export interface RecallStats {
@@ -45,6 +66,7 @@ export interface RecallStats {
   returned: number;
   urged: number;
   pending: number;
+  unresponsive: number;
   completionRate: number;
 }
 
@@ -54,4 +76,7 @@ export interface RecallFilterParams {
   level?: RecallLevel;
   startDate?: string;
   endDate?: string;
+  minCompletionRate?: number;
+  maxCompletionRate?: number;
+  hasUnresponsive?: boolean;
 }
