@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Package, AlertTriangle, FileText, User, Check, Eye, Building2, Store } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardBody, CardFooter } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -27,6 +28,7 @@ interface FormErrors {
 }
 
 export default function RecallInitiate() {
+  const navigate = useNavigate();
   const { batches, initBatches, getBatch } = useBatchStore();
   const { createRecall, queryDownstream } = useRecallStore();
 
@@ -114,7 +116,7 @@ export default function RecallInitiate() {
     try {
       const batch = getBatch(formData.batchId);
 
-      createRecall({
+      const newRecall = createRecall({
         batchId: formData.batchId,
         batchNo: batch?.batchNo,
         productName: batch?.productName,
@@ -128,16 +130,8 @@ export default function RecallInitiate() {
       setSuccessMsg('召回事件创建成功！');
 
       setTimeout(() => {
-        setFormData({
-          batchId: '',
-          reason: '',
-          level: 'level2',
-          scope: '',
-          initiator: '',
-        });
-        setDownstreamPreview([]);
-        setSuccessMsg('');
-      }, 2000);
+        navigate('/recalls/' + newRecall.id);
+      }, 1500);
     } catch (error) {
       console.error('创建召回失败:', error);
     } finally {
@@ -169,7 +163,7 @@ export default function RecallInitiate() {
         <div className="flex items-center gap-4">
           <button
             className="p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-            onClick={() => {}}
+            onClick={() => navigate('/recalls')}
           >
             <ArrowLeft size={20} />
           </button>

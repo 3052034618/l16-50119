@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Send,
@@ -24,6 +25,9 @@ import { exportRecallReport } from '@/utils/export';
 import { clsx } from 'clsx';
 
 export default function RecallDetail() {
+  const { id: urlId } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+
   const {
     recalls,
     initRecalls,
@@ -34,7 +38,7 @@ export default function RecallDetail() {
     updateNotificationStatus,
   } = useRecallStore();
 
-  const [recallId, setRecallId] = useState<string>('');
+  const [recallId, setRecallId] = useState<string>(urlId || '');
   const [sending, setSending] = useState(false);
   const [urging, setUrging] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -45,14 +49,16 @@ export default function RecallDetail() {
   }, [initRecalls]);
 
   useEffect(() => {
-    if (recalls.length > 0 && !recallId) {
+    if (urlId) {
+      setRecallId(urlId);
+    } else if (recalls.length > 0 && !recallId) {
       setRecallId(recalls[0].id);
     }
-  }, [recalls, recallId]);
+  }, [urlId, recalls, recallId]);
 
   const recall: Recall | undefined = useMemo(() => {
-    return recallId ? getRecall(recallId) : recalls[0];
-  }, [getRecall, recallId, recalls]);
+    return recallId ? getRecall(recallId) : undefined;
+  }, [getRecall, recallId]);
 
   const stats = useMemo(() => {
     return recall ? getRecallStats(recall.id) : null;
@@ -217,7 +223,7 @@ export default function RecallDetail() {
         <div className="flex items-center gap-4">
           <button
             className="p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-            onClick={() => {}}
+            onClick={() => navigate('/recalls')}
           >
             <ArrowLeft size={20} />
           </button>

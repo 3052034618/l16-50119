@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Plus, Filter, RefreshCw, Truck, Package, Download } from 'lucide-react';
 import { DataTable, Column } from '@/components/DataTable';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
@@ -12,6 +13,7 @@ import { formatDate } from '@/utils/date';
 import { exportShipmentRecords } from '@/utils/export';
 
 export default function ShipmentList() {
+  const navigate = useNavigate();
   const { shipments, initShipments, listShipments } = useShipmentStore();
   const { dealers, initBase } = useBaseStore();
 
@@ -141,7 +143,7 @@ export default function ShipmentList() {
           <Button
             variant="primary"
             icon={<Plus size={16} />}
-            onClick={() => {}}
+            onClick={() => navigate('/shipments/new')}
           >
             新增发货
           </Button>

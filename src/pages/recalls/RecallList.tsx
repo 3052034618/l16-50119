@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Plus, Filter, RefreshCw, AlertTriangle, Clock, CheckCircle, Send, Eye, Activity } from 'lucide-react';
 import { DataTable, Column } from '@/components/DataTable';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
@@ -10,6 +11,7 @@ import type { Recall, RecallStatus, RecallLevel, RecallFilterParams } from '@/ty
 import { formatDateTime } from '@/utils/date';
 
 export default function RecallList() {
+  const navigate = useNavigate();
   const { recalls, initRecalls, listRecalls, getRecallStats } = useRecallStore();
 
   const [keyword, setKeyword] = useState('');
@@ -44,7 +46,7 @@ export default function RecallList() {
   };
 
   const handleViewDetail = (id: string) => {
-    console.log('查看详情:', id);
+    navigate('/recalls/' + id);
   };
 
   const columns: Column<Recall>[] = [
@@ -162,7 +164,7 @@ export default function RecallList() {
           <Button
             variant="primary"
             icon={<Plus size={16} />}
-            onClick={() => {}}
+            onClick={() => navigate('/recalls/new')}
           >
             发起召回
           </Button>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Package, Building2, Truck, FileText, Check, AlertCircle } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardBody, CardFooter } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -31,6 +32,7 @@ interface FormErrors {
 }
 
 export default function ShipmentForm() {
+  const navigate = useNavigate();
   const { batches, initBatches, getBatch } = useBatchStore();
   const { createShipment } = useShipmentStore();
   const { dealers, initBase, getStoresByDealer } = useBaseStore();
@@ -172,17 +174,8 @@ export default function ShipmentForm() {
       setSuccessMsg('发货登记成功！');
 
       setTimeout(() => {
-        setFormData({
-          batchId: '',
-          dealerId: '',
-          storeIds: [],
-          quantity: '',
-          shipmentDate: today(),
-          trackingNo: '',
-          remark: '',
-        });
-        setSuccessMsg('');
-      }, 2000);
+        navigate('/shipments');
+      }, 1500);
     } catch (error) {
       console.error('提交失败:', error);
     } finally {
@@ -210,7 +203,7 @@ export default function ShipmentForm() {
         <div className="flex items-center gap-4">
           <button
             className="p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-            onClick={() => {}}
+            onClick={() => navigate('/shipments')}
           >
             <ArrowLeft size={20} />
           </button>
