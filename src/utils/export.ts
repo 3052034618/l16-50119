@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import type { Batch, Shipment, Recall, RecallStats } from '@/types';
+import type { DisposalSummaryItem } from '@/store/recallStore';
 import { formatDateTime, formatDate } from './date';
 
 export const exportToExcel = <T>(
@@ -67,10 +68,68 @@ export const exportShipmentRecords = (shipments: Shipment[]) => {
   exportToExcel(exportData, headers, `发货流向记录_${formatDate(new Date())}`);
 };
 
+const dedupeNotifications = (notifications: Recall['notifications']) => {
+  const seen = new Map<string, Recall['notifications'][number]>();
+  notifications.forEach((n) => {
+    const key = `${n.recipientType}-${n.recipientId}`;
+    if (seen.has(key)) {
+      const existing = seen.get(key)!;
+      seen.set(key, {
+        ...existing,
+        quantity: existing.quantity + n.quantity,
+        sentAt: existing.sentAt || n.sentAt,
+        respondedAt: existing.respondedAt || n.respondedAt,
+        urgeCount: Math.max(existing.urgeCount ?? 0, n.urgeCount ?? 0),
+        lastUrgedAt: existing.lastUrgedAt || n.lastUrgedAt,
+        disposalRemark: existing.disposalRemark || n.disposalRemark,
+        returnedQty: existing.returnedQty ?? n.returnedQty,
+        voucherNo: existing.voucherNo || n.voucherNo,
+        remark: existing.remark || n.remark,
+      });
+    } else {
+      seen.set(key, { ...n });
+    }
+  });
+  return Array.from(seen.values());
+};
+
 export const exportRecallReport = (
   recall: Recall,
-  stats: RecallStats
+  stats: RecallStats,
+  disposalSummary?: DisposalSummaryItem[]
 ) => {
+  const defaultDisposalSummary = (): DisposalSummaryItem[] => {
+    const deduped = dedupeNotifications(recall.notifications);
+    return deduped.map((n) => {
+      const offShelfQty = n.status === 'off_shelf' || n.status === 'returned' ? n.quantity : 0;
+      const actualReturnedQty = n.returnedQty ?? (n.status === 'returned' ? n.quantity : 0);
+      const hasVoucher = !!n.voucherNo;
+      const hasRemark = !!n.disposalRemark;
+      const hasReturnQty = n.returnedQty !== undefined;
+      let voucherStatus: DisposalSummaryItem['voucherStatus'] = 'none';
+      if (hasVoucher && hasRemark && (n.status === 'returned' ? hasReturnQty : true)) {
+        voucherStatus = 'complete';
+      } else if (hasVoucher || hasRemark || hasReturnQty) {
+        voucherStatus = 'partial';
+      }
+      const hasDiscrepancy = n.status === 'returned' && actualReturnedQty !== n.quantity;
+      return {
+        recipientType: n.recipientType,
+        recipientId: n.recipientId,
+        recipientName: n.recipientName,
+        contact: n.contact,
+        totalQty: n.quantity,
+        offShelfQty,
+        returnedQty: actualReturnedQty,
+        voucherStatus,
+        lastUpdatedAt: n.respondedAt || n.sentAt || recall.createdAt,
+        hasDiscrepancy,
+        notificationId: n.id,
+      };
+    });
+  };
+
+  const finalDisposalSummary = disposalSummary ?? defaultDisposalSummary();
   const recallInfo = [
     { 项目: '召回单号', 内容: recall.recallNo },
     { 项目: '关联批次', 内容: recall.batchNo },
@@ -100,7 +159,8 @@ export const exportRecallReport = (
     { 统计项: '完成率(%)', 数量: Number(stats.completionRate.toFixed(1)) },
   ];
 
-  const notifications = recall.notifications.map((n) => ({
+  const dedupedNotifications = dedupeNotifications(recall.notifications);
+  const notifications = dedupedNotifications.map((n) => ({
     接收方类型: n.recipientType === 'dealer' ? '经销商' : '门店',
     接收方名称: n.recipientName,
     联系人: n.contact,
@@ -116,6 +176,25 @@ export const exportRecallReport = (
     备注: n.remark || '',
   }));
 
+  const getVoucherStatusText = (status: DisposalSummaryItem['voucherStatus']) => {
+    const map = { complete: '凭证齐全', partial: '部分填写', none: '未填写' };
+    return map[status];
+  };
+
+  const disposalLedger = finalDisposalSummary.map((item, idx) => ({
+    序号: idx + 1,
+    接收方类型: item.recipientType === 'dealer' ? '经销商' : '门店',
+    接收方名称: item.recipientName,
+    联系人: item.contact,
+    应召回数量: item.totalQty,
+    已下架数量: item.offShelfQty,
+    已退回数量: item.returnedQty,
+    凭证状态: getVoucherStatusText(item.voucherStatus),
+    数量对齐: item.hasDiscrepancy ? '不一致' : (item.returnedQty > 0 ? '对齐' : '-'),
+    处置完成: item.returnedQty === item.totalQty && item.returnedQty > 0 ? '是' : '否',
+    最后更新时间: formatDateTime(item.lastUpdatedAt),
+  }));
+
   const timeline = [...(recall.timeline || [])]
     .sort((a, b) => a.time.localeCompare(b.time))
     .map((e, idx) => ({
@@ -127,11 +206,18 @@ export const exportRecallReport = (
       操作人: e.operator || '系统',
     }));
 
+  const summaryAdjusted = [...summary];
+  const totalIdx = summaryAdjusted.findIndex((s) => s.统计项 === '通知总数');
+  if (totalIdx >= 0) {
+    summaryAdjusted[totalIdx] = { ...summaryAdjusted[totalIdx], 数量: dedupedNotifications.length };
+  }
+
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.json_to_sheet(recallInfo);
-  const ws2 = XLSX.utils.json_to_sheet(summary);
+  const ws2 = XLSX.utils.json_to_sheet(summaryAdjusted);
   const ws3 = XLSX.utils.json_to_sheet(notifications);
   const ws4 = XLSX.utils.json_to_sheet(timeline);
+  const ws5 = XLSX.utils.json_to_sheet(disposalLedger);
 
   ws1['!cols'] = [{ wch: 16 }, { wch: 40 }];
   ws2['!cols'] = [{ wch: 18 }, { wch: 12 }];
@@ -143,11 +229,17 @@ export const exportRecallReport = (
   ws4['!cols'] = [
     { wch: 6 }, { wch: 20 }, { wch: 12 }, { wch: 30 }, { wch: 40 }, { wch: 10 },
   ];
+  ws5['!cols'] = [
+    { wch: 6 }, { wch: 10 }, { wch: 20 }, { wch: 18 },
+    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+    { wch: 12 }, { wch: 12 }, { wch: 20 },
+  ];
 
   XLSX.utils.book_append_sheet(wb, ws1, '召回信息');
   XLSX.utils.book_append_sheet(wb, ws2, '召回统计');
   XLSX.utils.book_append_sheet(wb, ws3, '通知详情');
   XLSX.utils.book_append_sheet(wb, ws4, '事件时间线');
+  XLSX.utils.book_append_sheet(wb, ws5, '处置台账汇总');
   XLSX.writeFile(wb, `召回报告_${recall.recallNo}.xlsx`);
 };
 

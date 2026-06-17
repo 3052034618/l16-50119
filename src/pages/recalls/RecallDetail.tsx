@@ -25,7 +25,7 @@ import { RingProgress } from '@/components/RingProgress';
 import { Kanban, KanbanColumn } from '@/components/Kanban';
 import { Timeline, TimelineItem } from '@/components/Timeline';
 import { RecallLevelTag, RecallStatusTag, NotificationStatusTag } from '@/components/ui/StatusTag';
-import { useRecallStore } from '@/store/recallStore';
+import { useRecallStore, type DisposalSummaryItem } from '@/store/recallStore';
 import type { Recall, RecallNotification, RecallNotificationStatus, RecallTimelineEvent } from '@/types/recall';
 import { formatDateTime } from '@/utils/date';
 import { exportRecallReport } from '@/utils/export';
@@ -65,6 +65,7 @@ export default function RecallDetail() {
     initRecalls,
     getRecall,
     getRecallStats,
+    getDisposalSummary,
     sendNotifications,
     urgeRecipients,
     updateNotificationStatus,
@@ -75,7 +76,9 @@ export default function RecallDetail() {
   const [sending, setSending] = useState(false);
   const [urging, setUrging] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [viewMode, setViewMode] = useState<'kanban' | 'ledger'>('kanban');
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [disposalForms, setDisposalForms] = useState<Record<string, DisposalFormData>>({});
 
@@ -98,6 +101,10 @@ export default function RecallDetail() {
   const stats = useMemo(() => {
     return recall ? getRecallStats(recall.id) : null;
   }, [getRecallStats, recall]);
+
+  const disposalSummary = useMemo((): DisposalSummaryItem[] => {
+    return recall ? getDisposalSummary(recall.id) : [];
+  }, [getDisposalSummary, recall]);
 
   useEffect(() => {
     if (!recall) return;
@@ -189,15 +196,21 @@ export default function RecallDetail() {
   const handleSaveDisposal = (notificationId: string) => {
     const form = disposalForms[notificationId];
     if (!form) return;
+    setErrorMsg('');
 
-    updateNotificationDisposal(notificationId, {
+    const result = updateNotificationDisposal(notificationId, {
       disposalRemark: form.disposalRemark || undefined,
       returnedQty: form.returnedQty ? Number(form.returnedQty) : undefined,
       voucherNo: form.voucherNo || undefined,
     });
 
-    setSuccessMsg('处置凭证已保存');
-    setTimeout(() => setSuccessMsg(''), 2000);
+    if (result.success) {
+      setSuccessMsg('处置凭证已保存');
+      setTimeout(() => setSuccessMsg(''), 2000);
+    } else {
+      setErrorMsg(result.error || '保存失败');
+      setTimeout(() => setErrorMsg(''), 3000);
+    }
   };
 
   const handleSendNotifications = async () => {
@@ -241,7 +254,7 @@ export default function RecallDetail() {
     setExporting(true);
 
     try {
-      exportRecallReport(recall, stats);
+      exportRecallReport(recall, stats, disposalSummary);
       setSuccessMsg('召回报告导出成功');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (error) {
@@ -558,6 +571,15 @@ export default function RecallDetail() {
         </div>
       )}
 
+      {errorMsg && (
+        <div className="mb-6 p-4 rounded-lg bg-alert-danger-50 border border-alert-danger-200 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-alert-danger-100 flex items-center justify-center">
+            <AlertTriangle size={18} className="text-alert-danger-700" />
+          </div>
+          <span className="font-medium text-alert-danger-800">{errorMsg}</span>
+        </div>
+      )}
+
       <Card padding="none" className="mb-6">
         <CardBody className="p-6">
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -726,10 +748,36 @@ export default function RecallDetail() {
 
         <Card padding="none" className="xl:col-span-2">
           <CardHeader divider className="px-6 pt-4 pb-4">
-            <div className="flex items-center justify-between w-full">
-              <CardTitle icon={<RefreshCw size={18} />}>
-                下游流向响应追踪
-              </CardTitle>
+            <div className="flex items-center justify-between w-full flex-wrap gap-3">
+              <div className="flex items-center gap-4">
+                <CardTitle icon={<RefreshCw size={18} />}>
+                  下游流向响应追踪
+                </CardTitle>
+                <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setViewMode('kanban')}
+                    className={clsx(
+                      'px-3 py-1.5 text-xs font-medium rounded-md transition-all',
+                      viewMode === 'kanban'
+                        ? 'bg-white text-gray-800 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    )}
+                  >
+                    看板视图
+                  </button>
+                  <button
+                    onClick={() => setViewMode('ledger')}
+                    className={clsx(
+                      'px-3 py-1.5 text-xs font-medium rounded-md transition-all',
+                      viewMode === 'ledger'
+                        ? 'bg-white text-gray-800 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    )}
+                  >
+                    处置台账
+                  </button>
+                </div>
+              </div>
               <div className="flex items-center gap-4 text-xs flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <NotificationStatusTag status="pending" size={12} />
@@ -753,22 +801,117 @@ export default function RecallDetail() {
               </div>
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              卡片右上角红色角标表示已催促（不影响当前状态），点击卡片右下角 ▾ 按钮可展开查看/填写处置凭证
+              {viewMode === 'kanban'
+                ? '卡片右上角红色角标表示已催促（不影响当前状态），点击卡片右下角 ▾ 按钮可展开查看/填写处置凭证'
+                : '按经销商/门店汇总展示，红色标记表示凭证缺失或数量不一致，需要跟进'}
             </p>
           </CardHeader>
-          <CardBody className="p-6">
-            {recall.notifications.length === 0 ? (
+          <CardBody className="p-0">
+            {viewMode === 'ledger' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-left text-gray-600">
+                      <th className="px-6 py-3 font-medium text-xs uppercase tracking-wider">接收方</th>
+                      <th className="px-6 py-3 font-medium text-xs uppercase tracking-wider">联系人</th>
+                      <th className="px-6 py-3 font-medium text-xs uppercase tracking-wider text-right">应召回</th>
+                      <th className="px-6 py-3 font-medium text-xs uppercase tracking-wider text-right">已下架</th>
+                      <th className="px-6 py-3 font-medium text-xs uppercase tracking-wider text-right">已退回</th>
+                      <th className="px-6 py-3 font-medium text-xs uppercase tracking-wider text-center">凭证状态</th>
+                      <th className="px-6 py-3 font-medium text-xs uppercase tracking-wider text-center">数量对齐</th>
+                      <th className="px-6 py-3 font-medium text-xs uppercase tracking-wider">最后更新</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {disposalSummary.map((item) => {
+                      const notification = recall.notifications.find((n) => n.id === item.notificationId);
+                      return (
+                        <tr key={item.recipientId} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <span className={clsx(
+                                'px-2 py-0.5 text-[10px] rounded',
+                                item.recipientType === 'dealer' ? 'bg-indigo-100 text-indigo-700' : 'bg-green-100 text-green-700'
+                              )}>
+                                {item.recipientType === 'dealer' ? '经销商' : '门店'}
+                              </span>
+                              <span className="font-medium text-gray-800">{item.recipientName}</span>
+                              {notification && notification.urgeCount && notification.urgeCount > 0 && (
+                                <span className="px-1.5 py-0.5 text-[10px] bg-red-100 text-red-700 rounded">
+                                  已催促 {notification.urgeCount} 次
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-gray-600">{item.contact}</td>
+                          <td className="px-6 py-4 text-right font-medium text-gray-800">{item.totalQty} 件</td>
+                          <td className="px-6 py-4 text-right">
+                            <span className={clsx(
+                              'font-medium',
+                              item.offShelfQty > 0 ? 'text-amber-700' : 'text-gray-400'
+                            )}>
+                              {item.offShelfQty || 0} 件
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <span className={clsx(
+                              'font-medium',
+                              item.returnedQty > 0 ? 'text-brand-700' : 'text-gray-400'
+                            )}>
+                              {item.returnedQty || 0} 件
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            {item.voucherStatus === 'complete' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] bg-green-100 text-green-700 rounded">
+                                <Check size={12} /> 凭证齐全
+                              </span>
+                            ) : item.voucherStatus === 'partial' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] bg-amber-100 text-amber-700 rounded">
+                                <AlertTriangle size={12} /> 部分填写
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] bg-gray-100 text-gray-500 rounded">
+                                <Clock size={12} /> 未填写
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            {item.hasDiscrepancy ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] bg-red-100 text-red-700 rounded">
+                                <AlertTriangle size={12} /> 不一致
+                              </span>
+                            ) : item.returnedQty > 0 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 text-[11px] bg-green-100 text-green-700 rounded">
+                                <Check size={12} /> 对齐
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-[11px]">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-gray-500 text-xs">
+                            {formatDateTime(item.lastUpdatedAt)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : recall.notifications.length === 0 ? (
               <div className="p-16 text-center text-gray-400">
                 <Package size={48} className="mx-auto mb-3 opacity-40" />
                 <p>暂无下游流向数据</p>
               </div>
             ) : (
-              <Kanban
-                columns={kanbanColumns}
-                renderItemBody={renderItemBody}
-                renderItemActions={renderItemActions}
-                renderItemBadge={renderItemBadge}
-              />
+              <div className="p-6">
+                <Kanban
+                  columns={kanbanColumns}
+                  renderItemBody={renderItemBody}
+                  renderItemActions={renderItemActions}
+                  renderItemBadge={renderItemBadge}
+                />
+              </div>
             )}
           </CardBody>
         </Card>

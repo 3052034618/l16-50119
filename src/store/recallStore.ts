@@ -33,9 +33,10 @@ interface RecallStore {
   updateNotificationDisposal: (
     notificationId: string,
     data: Partial<Pick<RecallNotification, 'disposalRemark' | 'returnedQty' | 'voucherNo'>>
-  ) => void;
+  ) => { success: boolean; error?: string };
   urgeRecipients: (recallId: string) => string[];
   getRecallStats: (recallId: string) => RecallStats;
+  getDisposalSummary: (recallId: string) => DisposalSummaryItem[];
   updateRecallStatus: (id: string, status: RecallStatus) => void;
 }
 
@@ -86,6 +87,101 @@ const isHighRisk = (recall: Recall, stats: RecallStats): boolean => {
   return stats.riskScore >= 40 || stats.totalUrgeCount >= 2 || stats.overdueDays >= 3 || stats.completionRate < 50;
 };
 
+const dedupeNotifications = (notifications: RecallNotification[]): RecallNotification[] => {
+  const seen = new Map<string, RecallNotification>();
+  notifications.forEach((n) => {
+    const key = `${n.recipientType}-${n.recipientId}`;
+    if (seen.has(key)) {
+      const existing = seen.get(key)!;
+      seen.set(key, {
+        ...existing,
+        quantity: existing.quantity + n.quantity,
+        status: getLaterStatus(existing.status, n.status),
+        sentAt: existing.sentAt || n.sentAt,
+        respondedAt: existing.respondedAt || n.respondedAt,
+        urgeCount: Math.max(existing.urgeCount ?? 0, n.urgeCount ?? 0),
+        lastUrgedAt: existing.lastUrgedAt || n.lastUrgedAt,
+        urgedAt: existing.urgedAt || n.urgedAt,
+        disposalRemark: existing.disposalRemark || n.disposalRemark,
+        returnedQty: existing.returnedQty ?? n.returnedQty,
+        voucherNo: existing.voucherNo || n.voucherNo,
+        remark: existing.remark || n.remark,
+      });
+    } else {
+      seen.set(key, { ...n });
+    }
+  });
+  return Array.from(seen.values());
+};
+
+const getLaterStatus = (a: RecallNotificationStatus, b: RecallNotificationStatus): RecallNotificationStatus => {
+  const order: RecallNotificationStatus[] = ['pending', 'sent', 'received', 'off_shelf', 'returned', 'urged'];
+  const idxA = order.indexOf(a === 'urged' ? 'sent' : a);
+  const idxB = order.indexOf(b === 'urged' ? 'sent' : b);
+  return idxA >= idxB ? a : b;
+};
+
+const validateDisposalData = (
+  data: Partial<Pick<RecallNotification, 'returnedQty'>>,
+  maxQty: number
+): { valid: boolean; error?: string } => {
+  if (data.returnedQty !== undefined) {
+    if (data.returnedQty < 0) {
+      return { valid: false, error: '退回数量不能为负数' };
+    }
+    if (data.returnedQty > maxQty) {
+      return { valid: false, error: `退回数量不能超过涉及数量 ${maxQty}` };
+    }
+  }
+  return { valid: true };
+};
+
+export interface DisposalSummaryItem {
+  recipientType: 'dealer' | 'store';
+  recipientId: string;
+  recipientName: string;
+  contact: string;
+  totalQty: number;
+  offShelfQty: number;
+  returnedQty: number;
+  voucherStatus: 'complete' | 'partial' | 'none';
+  lastUpdatedAt: string;
+  hasDiscrepancy: boolean;
+  notificationId: string;
+}
+
+const getDisposalSummary = (recall: Recall): DisposalSummaryItem[] => {
+  const deduped = dedupeNotifications(recall.notifications);
+  return deduped.map((n) => {
+    const offShelfQty = n.status === 'off_shelf' || n.status === 'returned' ? n.quantity : 0;
+    const actualReturnedQty = n.returnedQty ?? (n.status === 'returned' ? n.quantity : 0);
+    const hasVoucher = !!n.voucherNo;
+    const hasRemark = !!n.disposalRemark;
+    const hasReturnQty = n.returnedQty !== undefined;
+    let voucherStatus: DisposalSummaryItem['voucherStatus'] = 'none';
+    if (hasVoucher && hasRemark && (n.status === 'returned' ? hasReturnQty : true)) {
+      voucherStatus = 'complete';
+    } else if (hasVoucher || hasRemark || hasReturnQty) {
+      voucherStatus = 'partial';
+    }
+    const hasDiscrepancy = n.status === 'returned' && actualReturnedQty !== n.quantity;
+
+    return {
+      recipientType: n.recipientType,
+      recipientId: n.recipientId,
+      recipientName: n.recipientName,
+      contact: n.contact,
+      totalQty: n.quantity,
+      offShelfQty,
+      returnedQty: actualReturnedQty,
+      voucherStatus,
+      lastUpdatedAt: n.respondedAt || n.sentAt || recall.createdAt,
+      hasDiscrepancy,
+      notificationId: n.id,
+    };
+  });
+};
+
 export const useRecallStore = create<RecallStore>()(
   persist(
     (set, get) => ({
@@ -102,14 +198,16 @@ export const useRecallStore = create<RecallStore>()(
               : [
                   buildTimelineEvent('created', '创建召回单', `${r.recallNo} - ${r.reason}`, r.initiator),
                 ],
-            notifications: r.notifications.map((n) => ({
-              ...n,
-              urgeCount: n.urgeCount ?? 0,
-              lastUrgedAt: n.lastUrgedAt,
-              disposalRemark: n.disposalRemark,
-              returnedQty: n.returnedQty,
-              voucherNo: n.voucherNo,
-            })),
+            notifications: dedupeNotifications(
+              r.notifications.map((n) => ({
+                ...n,
+                urgeCount: n.urgeCount ?? 0,
+                lastUrgedAt: n.lastUrgedAt,
+                disposalRemark: n.disposalRemark,
+                returnedQty: n.returnedQty,
+                voucherNo: n.voucherNo,
+              }))
+            ),
           }));
           set({ recalls: migrated, initialized: true });
         }
@@ -226,7 +324,11 @@ export const useRecallStore = create<RecallStore>()(
         return result;
       },
 
-      getRecall: (id) => get().recalls.find((r) => r.id === id),
+      getRecall: (id) => {
+        const recall = get().recalls.find((r) => r.id === id);
+        if (!recall) return undefined;
+        return { ...recall, notifications: dedupeNotifications(recall.notifications) };
+      },
 
       queryDownstream: (batchId) => {
         ensureDependenciesInitialized();
@@ -406,10 +508,14 @@ export const useRecallStore = create<RecallStore>()(
       },
 
       updateNotificationDisposal: (notificationId, data) => {
-        set({
-          recalls: get().recalls.map((r) => {
-            const matched = r.notifications.find((n) => n.id === notificationId);
-            if (!matched) return r;
+        const state = get();
+        for (const r of state.recalls) {
+          const matched = r.notifications.find((n) => n.id === notificationId);
+          if (matched) {
+            const validation = validateDisposalData(data, matched.quantity);
+            if (!validation.valid) {
+              return { success: false, error: validation.error };
+            }
 
             const updatedNotifications = r.notifications.map((n) =>
               n.id === notificationId ? { ...n, ...data } : n
@@ -428,9 +534,17 @@ export const useRecallStore = create<RecallStore>()(
               matched.id
             );
 
-            return appendTimeline({ ...r, notifications: updatedNotifications }, [event]);
-          }),
-        });
+            set({
+              recalls: state.recalls.map((rr) =>
+                rr.id === r.id
+                  ? appendTimeline({ ...rr, notifications: updatedNotifications }, [event])
+                  : rr
+              ),
+            });
+            return { success: true };
+          }
+        }
+        return { success: false, error: '未找到通知记录' };
       },
 
       urgeRecipients: (recallId) => {
@@ -492,11 +606,12 @@ export const useRecallStore = create<RecallStore>()(
           };
         }
 
-        const total = recall.notifications.length;
+        const deduped = dedupeNotifications(recall.notifications);
+        const total = deduped.length;
         let pending = 0, sent = 0, received = 0, offShelf = 0, returned = 0, urged = 0;
         let totalUrgeCount = 0;
 
-        recall.notifications.forEach((n) => {
+        deduped.forEach((n) => {
           if (n.urgeCount && n.urgeCount > 0) urged++;
           totalUrgeCount += n.urgeCount ?? 0;
           if (n.status === 'pending') pending++;
@@ -517,6 +632,12 @@ export const useRecallStore = create<RecallStore>()(
 
         stats.riskScore = calculateRiskScore(recall, stats);
         return stats;
+      },
+
+      getDisposalSummary: (recallId) => {
+        const recall = get().getRecall(recallId);
+        if (!recall) return [];
+        return getDisposalSummary(recall);
       },
 
       updateRecallStatus: (id, status) => {
